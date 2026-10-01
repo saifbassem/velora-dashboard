@@ -34,18 +34,61 @@ st.set_page_config(
     layout="wide",
 )
 
+# ---------- Themes (dark / light) ----------
+THEMES = {
+    "dark": {
+        "bg": "#0a0b0d", "text": "#e8eaee", "strong": "#ffffff",
+        "silver": "#c9ced6", "silver-d": "#8b929c",
+        "card": "rgba(255,255,255,.04)", "bd": "rgba(201,206,214,.16)",
+        "bd-h": "rgba(230,235,245,.6)", "bd-h2": "rgba(230,235,245,.35)",
+        "sh": "rgba(0,0,0,.4)", "sh2": "rgba(0,0,0,.55)", "glow": "rgba(200,210,225,.2)",
+        "ring": "rgba(201,206,214,.18)", "rowh": "rgba(255,255,255,.05)", "sweep": "rgba(255,255,255,.18)",
+        "blob1": "rgba(150,165,190,.16)", "blob2": "rgba(190,200,215,.12)",
+        "title-a": "#ffffff", "title-b": "#8b929c", "line-a": "#e8eaee", "line-b": "#6e7580",
+        "ok": "#5be39a", "ok-bg": "rgba(60,200,120,.1)", "ok-bd": "#2c8a5a",
+        "wait": "#ffc107", "wait-bg": "rgba(255,193,7,.1)", "wait-bd": "#8a6d10",
+        "bad": "#ff6b6b", "bad-bg": "rgba(255,80,80,.1)", "bad-bd": "#8a2c2c",
+        "av-grad": "linear-gradient(135deg,#fff,#8b929c 60%,#d8dde5)", "av-text": "#0a0b0d",
+        "btn-grad": "linear-gradient(135deg,#fff,#aab0ba)", "btn-text": "#0a0b0d",
+    },
+    "light": {
+        "bg": "#f3f4f6", "text": "#14161a", "strong": "#0a0b0d",
+        "silver": "#3c424c", "silver-d": "#6b7280",
+        "card": "rgba(255,255,255,.8)", "bd": "rgba(20,22,26,.14)",
+        "bd-h": "rgba(20,22,26,.45)", "bd-h2": "rgba(20,22,26,.3)",
+        "sh": "rgba(30,40,60,.12)", "sh2": "rgba(30,40,60,.2)", "glow": "rgba(90,105,130,.18)",
+        "ring": "rgba(20,22,26,.12)", "rowh": "rgba(20,22,26,.05)", "sweep": "rgba(20,40,80,.1)",
+        "blob1": "rgba(120,135,160,.2)", "blob2": "rgba(150,165,190,.16)",
+        "title-a": "#14161a", "title-b": "#5b6270", "line-a": "#14161a", "line-b": "#9aa0aa",
+        "ok": "#12804a", "ok-bg": "rgba(18,128,74,.1)", "ok-bd": "#7fcf9f",
+        "wait": "#9a6b00", "wait-bg": "rgba(255,193,7,.2)", "wait-bd": "#d9b24a",
+        "bad": "#c0392b", "bad-bg": "rgba(192,57,43,.1)", "bad-bd": "#e0a29b",
+        "av-grad": "linear-gradient(135deg,#4a5160,#1a1d22 60%,#5b6270)", "av-text": "#ffffff",
+        "btn-grad": "linear-gradient(135deg,#1a1d22,#4a5160)", "btn-text": "#ffffff",
+    },
+}
+
+if "theme" not in st.session_state:
+    q = st.query_params.get("theme", "dark")
+    st.session_state["theme"] = q if q in THEMES else "dark"
+
 # ---------- Style + animations ----------
-CSS = """
+BASE_CSS = """
 <style>
-:root{--silver:#c9ced6;--silver-d:#8b929c;--bg:#0a0b0d;--card:rgba(255,255,255,.04);--bd:rgba(201,206,214,.16);}
-html,body,.stApp{background:var(--bg);color:#e8eaee;}
-[data-testid="stHeader"]{background:transparent;}
+html,body,.stApp{background:var(--bg);color:var(--text);}
+
+/* hide Streamlit / GitHub branding */
+#MainMenu,footer,[data-testid="stToolbar"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],
+[data-testid="stAppDeployButton"],.stAppDeployButton,[class*="viewerBadge"],[class*="_profileContainer"],
+a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:hidden!important;}
+[data-testid="stHeader"]{display:none;}
+.block-container{padding-top:1.5rem;}
 [data-testid="stMain"]{position:relative;z-index:1;}
 
 /* drifting metallic glow in the background */
 .stApp::before{content:"";position:fixed;inset:-20%;z-index:0;pointer-events:none;
-  background:radial-gradient(40% 40% at 20% 25%,rgba(150,165,190,.16),transparent 70%),
-             radial-gradient(35% 35% at 80% 70%,rgba(190,200,215,.12),transparent 70%);
+  background:radial-gradient(40% 40% at 20% 25%,var(--blob1),transparent 70%),
+             radial-gradient(35% 35% at 80% 70%,var(--blob2),transparent 70%);
   animation:drift 22s ease-in-out infinite alternate;}
 
 @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(4%,-3%) scale(1.12)}}
@@ -61,6 +104,9 @@ html,body,.stApp{background:var(--bg);color:#e8eaee;}
 
 .block-container{animation:fadeUp .6s cubic-bezier(.2,.8,.2,1) backwards;}
 
+/* theme toggle */
+.st-key-theme_btn button{font-size:.8rem;padding:2px 10px;min-height:2rem;}
+
 /* header with logo */
 .vsw-header{display:flex;align-items:center;gap:22px;margin:4px 0 10px;animation:fadeUp .7s backwards;}
 .logo-wrap{position:relative;width:150px;animation:floaty 5s ease-in-out infinite;}
@@ -70,78 +116,115 @@ html,body,.stApp{background:var(--bg);color:#e8eaee;}
   background:linear-gradient(110deg,transparent 40%,rgba(255,255,255,.95) 50%,transparent 60%);
   background-size:250% 100%;animation:shine 3.2s ease-in-out infinite;}
 .vsw-title{font-size:2rem;font-weight:800;letter-spacing:.18em;
-  background:linear-gradient(180deg,#fff,#8b929c);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  background:linear-gradient(180deg,var(--title-a),var(--title-b));-webkit-background-clip:text;background-clip:text;color:transparent;}
 .vsw-title small{display:block;font-size:.75rem;font-weight:500;letter-spacing:.3em;color:var(--silver-d);
   -webkit-text-fill-color:var(--silver-d);margin-top:2px;}
 .vsw-line{height:2px;border-radius:2px;margin:6px 0 22px;
-  background:linear-gradient(90deg,transparent,#e8eaee,#6e7580,transparent,#e8eaee);background-size:300% 100%;
+  background:linear-gradient(90deg,transparent,var(--line-a),var(--line-b),transparent,var(--line-a));background-size:300% 100%;
   animation:lineMove 6s linear infinite;}
 
 /* generic buttons */
-.stButton>button{border-radius:12px;border:1px solid var(--bd);background:var(--card);color:#e8eaee;
+.stButton>button{border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--text);
   transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s,border-color .25s;}
-.stButton>button:hover{transform:translateY(-2px);border-color:rgba(230,235,245,.6);box-shadow:0 8px 20px rgba(0,0,0,.4);}
+.stButton>button:hover{transform:translateY(-2px);border-color:var(--bd-h);box-shadow:0 8px 20px var(--sh);}
 .stButton>button:active{transform:scale(.97);}
 
 /* order cards */
 .st-key-grid .stButton>button{height:auto;padding:18px 10px;position:relative;overflow:hidden;
   animation:fadeUp .55s cubic-bezier(.2,.8,.2,1) backwards;}
 .st-key-grid .stButton>button:hover{transform:translateY(-7px) scale(1.03);
-  box-shadow:0 16px 32px rgba(0,0,0,.55),0 0 24px rgba(200,210,225,.2);}
+  box-shadow:0 16px 32px var(--sh2),0 0 24px var(--glow);}
 .st-key-grid .stButton>button p{margin:0;line-height:1.4;}
 .st-key-grid .stButton>button p:first-child{font-size:1.25rem;font-weight:700;letter-spacing:.05em;}
 .st-key-grid .stButton>button p:last-child:not(:first-child){font-size:.8rem;color:var(--silver-d);}
 .st-key-grid .stButton>button::after{content:"";position:absolute;top:0;left:-120%;width:60%;height:100%;
-  background:linear-gradient(110deg,transparent,rgba(255,255,255,.18),transparent);transition:left .6s;}
+  background:linear-gradient(110deg,transparent,var(--sweep),transparent);transition:left .6s;}
 .st-key-grid .stButton>button:hover::after{left:140%;}
 .st-key-grid [data-testid="stColumn"]:nth-child(2) .stButton>button{animation-delay:.07s}
 .st-key-grid [data-testid="stColumn"]:nth-child(3) .stButton>button{animation-delay:.14s}
 .st-key-grid [data-testid="stColumn"]:nth-child(4) .stButton>button{animation-delay:.21s}
 
 /* inputs */
-.stTextInput input{background:var(--card);border:1px solid var(--bd);border-radius:12px;transition:border-color .3s,box-shadow .3s;}
-.stTextInput input:focus{border-color:var(--silver);box-shadow:0 0 0 3px rgba(201,206,214,.18);}
+.stTextInput [data-baseweb="input"]{background:var(--card);border:1px solid var(--bd);border-radius:12px;}
+.stTextInput input{background:transparent;color:var(--text);transition:border-color .3s,box-shadow .3s;}
+.stTextInput [data-baseweb="input"]:focus-within{border-color:var(--silver);box-shadow:0 0 0 3px var(--ring);}
 
 /* detail page */
 .st-key-detail [data-testid="stColumn"]:nth-child(1){animation:slideL .7s cubic-bezier(.2,.8,.2,1) backwards;}
 .st-key-detail [data-testid="stColumn"]:nth-child(2){animation:slideR .7s cubic-bezier(.2,.8,.2,1) .1s backwards;}
 .panel{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:18px 20px;margin-bottom:16px;
   backdrop-filter:blur(6px);transition:transform .3s,box-shadow .3s,border-color .3s;}
-.panel:hover{transform:translateY(-3px);border-color:rgba(230,235,245,.35);box-shadow:0 12px 28px rgba(0,0,0,.4);}
+.panel:hover{transform:translateY(-3px);border-color:var(--bd-h2);box-shadow:0 12px 28px var(--sh);}
 .panel h4{margin:0 0 10px;font-size:.8rem;letter-spacing:.25em;text-transform:uppercase;color:var(--silver-d);}
 .badge{display:inline-block;padding:5px 14px;border-radius:999px;font-size:.78rem;font-weight:700;letter-spacing:.08em;
   border:1px solid var(--bd);margin:0 8px 8px 0;animation:pop .6s backwards;}
-.badge.ok{color:#5be39a;border-color:#2c8a5a;background:rgba(60,200,120,.1);}
-.badge.wait{color:#ffc107;border-color:#8a6d10;background:rgba(255,193,7,.1);animation:pop .6s backwards,pulse 1.8s infinite;}
-.badge.bad{color:#ff6b6b;border-color:#8a2c2c;background:rgba(255,80,80,.1);}
+.badge.ok{color:var(--ok);border-color:var(--ok-bd);background:var(--ok-bg);}
+.badge.wait{color:var(--wait);border-color:var(--wait-bd);background:var(--wait-bg);animation:pop .6s backwards,pulse 1.8s infinite;}
+.badge.bad{color:var(--bad);border-color:var(--bad-bd);background:var(--bad-bg);}
 .badge.neutral{color:var(--silver);}
 .item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 4px;
   border-bottom:1px solid var(--bd);animation:fadeUp .5s backwards;transition:background .25s,padding-left .25s;}
-.item:hover{background:rgba(255,255,255,.05);padding-left:12px;border-radius:8px;}
+.item:hover{background:var(--rowh);padding-left:12px;border-radius:8px;}
 .item .t{font-weight:600}.item .s{font-size:.78rem;color:var(--silver-d)}
 .item .q{font-weight:700;white-space:nowrap}
 .tot{display:flex;justify-content:space-between;padding:6px 4px;color:var(--silver);}
-.tot.big{font-size:1.25rem;font-weight:800;color:#fff;border-top:1px solid var(--bd);margin-top:6px;padding-top:12px;}
+.tot.big{font-size:1.25rem;font-weight:800;color:var(--strong);border-top:1px solid var(--bd);margin-top:6px;padding-top:12px;}
 .avatar{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:1.5rem;font-weight:800;color:#0a0b0d;margin-bottom:12px;animation:pop .7s backwards;
-  background:linear-gradient(135deg,#fff,#8b929c 60%,#d8dde5);box-shadow:0 0 22px rgba(200,210,225,.35);}
-.kv{margin:4px 0;color:var(--silver)}.kv b{color:#fff}
+  font-size:1.5rem;font-weight:800;color:var(--av-text);margin-bottom:12px;animation:pop .7s backwards;
+  background:var(--av-grad);box-shadow:0 0 22px var(--glow);}
+.kv{margin:4px 0;color:var(--silver)}.kv b{color:var(--strong)}
 .addr{color:var(--silver);line-height:1.6}
 
 .track-link{display:inline-block;margin:6px 0 2px;padding:8px 16px;border-radius:10px;font-weight:700;letter-spacing:.05em;
-  color:#0a0b0d!important;text-decoration:none!important;background:linear-gradient(135deg,#fff,#aab0ba);
+  color:var(--btn-text)!important;text-decoration:none!important;background:var(--btn-grad);
   transition:transform .25s,box-shadow .25s;}
-.track-link:hover{transform:translateY(-3px);box-shadow:0 8px 22px rgba(200,210,225,.35);}
+.track-link:hover{transform:translateY(-3px);box-shadow:0 8px 22px var(--sh2);}
 .ship{padding:10px 0;border-bottom:1px solid var(--bd);animation:fadeUp .5s backwards;}
 .ship:last-child{border-bottom:none}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 """
-st.markdown(CSS, unsafe_allow_html=True)
+
+# Extra rules that make Streamlit's own dark widgets readable in light mode
+LIGHT_EXTRA = """
+<style>
+.logo-wrap img{animation:glowL 4s ease-in-out infinite;}
+@keyframes glowL{0%,100%{filter:brightness(.3) drop-shadow(0 0 3px rgba(20,30,50,.15))}
+                 50%{filter:brightness(.3) drop-shadow(0 0 12px rgba(20,30,50,.35))}}
+.stApp h1,.stApp h2,.stApp h3,.stApp label,
+.stApp [data-testid="stMarkdownContainer"] p,.stApp [data-testid="stWidgetLabel"] p{color:var(--text);}
+.stTextInput [data-baseweb="input"]{background:var(--card)!important;border-color:var(--bd)!important;}
+.stTextInput input{color:var(--text)!important;-webkit-text-fill-color:var(--text);}
+.stTextInput input::placeholder{color:var(--silver-d);}
+.stButton>button:disabled{opacity:.45;}
+[data-testid="stAlert"]{background:rgba(255,255,255,.85)!important;}
+[data-testid="stAlert"] p{color:var(--text);}
+</style>
+"""
+
+
+def inject_css():
+    name = st.session_state["theme"]
+    root = f":root{{color-scheme:{name};" + "".join(f"--{k}:{v};" for k, v in THEMES[name].items()) + "}"
+    st.markdown(f"<style>{root}</style>" + BASE_CSS + (LIGHT_EXTRA if name == "light" else ""),
+                unsafe_allow_html=True)
+
+
+inject_css()
+
+
+def theme_toggle():
+    light = st.session_state["theme"] == "light"
+    _, right = st.columns([5, 1])
+    if right.button("☾ Dark mode" if light else "☀ Light mode", key="theme_btn", width="stretch"):
+        st.session_state["theme"] = "dark" if light else "light"
+        st.query_params["theme"] = st.session_state["theme"]
+        st.rerun()
 
 
 def header(subtitle="Velora Sportswear"):
+    theme_toggle()
     if LOGO_B64:
         uri = f"data:image/png;base64,{LOGO_B64}"
         logo = (f'<div class="logo-wrap" style="--logo:url(\'{uri}\')">'
@@ -298,7 +381,7 @@ def badge(label):
 
 def address_html(title, a):
     if not a:
-        body = '<span style="color:#8b929c">Not available</span>'
+        body = '<span style="color:var(--silver-d)">Not available</span>'
     else:
         parts = [a.get("name"), a.get("address1"), a.get("address2"),
                  " ".join(filter(None, [a.get("zip"), a.get("city")])),
@@ -348,7 +431,7 @@ def order_page(order_id):
         with left:
             st.markdown(
                 f'<h2 style="margin:0">Order {esc(order["name"])}</h2>'
-                f'<div style="color:#8b929c;margin-bottom:12px">{fmt_dt(order["createdAt"], tz)}</div>'
+                f'<div style="color:var(--silver-d);margin-bottom:12px">{fmt_dt(order["createdAt"], tz)}</div>'
                 f'{badge(order["displayFinancialStatus"])}{badge(order["displayFulfillmentStatus"])}',
                 unsafe_allow_html=True,
             )
@@ -374,7 +457,7 @@ def order_page(order_id):
             if disc and float(disc["shopMoney"]["amount"]) > 0:
                 codes = ", ".join(order.get("discountCodes") or [])
                 label = f"Discount ({esc(codes)})" if codes else "Discount"
-                disc_row = (f'<div class="tot" style="color:#5be39a"><span>{label}</span>'
+                disc_row = (f'<div class="tot" style="color:var(--ok)"><span>{label}</span>'
                             f'<span>-{money(disc)}</span></div>')
             totals = (
                 f'<div class="tot"><span>Subtotal</span><span>{subtotal_val:,.2f} {cur}</span></div>'
@@ -397,7 +480,7 @@ def order_page(order_id):
                 ship_html += f'<div class="ship" style="animation-delay:{n * 0.1:.1f}s">{badge(f["status"])}'
                 trackings = f.get("trackingInfo") or []
                 if not trackings:
-                    ship_html += '<div style="color:#8b929c">No tracking code added yet.</div>'
+                    ship_html += '<div style="color:var(--silver-d)">No tracking code added yet.</div>'
                 for t in trackings:
                     company = esc(t.get("company")) if t.get("company") else "Carrier"
                     number = t.get("number")
@@ -410,7 +493,7 @@ def order_page(order_id):
                         ship_html += f'<div class="kv">Tracking number: <b>{esc(number)}</b></div>'
                 ship_html += "</div>"
             if not ship_html:
-                ship_html = '<div style="color:#8b929c">Not fulfilled yet. Tracking will appear here once it ships.</div>'
+                ship_html = '<div style="color:var(--silver-d)">Not fulfilled yet. Tracking will appear here once it ships.</div>'
             st.markdown(f'<div class="panel"><h4>Shipping &amp; tracking</h4>{ship_html}</div>', unsafe_allow_html=True)
 
         with right:
@@ -430,7 +513,7 @@ def order_page(order_id):
                     f'<div class="avatar">?</div>'
                     f'<div class="kv">Email: <b>{esc(order.get("email"))}</b></div>'
                     f'<div class="kv">Phone: <b>{esc(order.get("phone"))}</b></div>'
-                    '<div style="color:#8b929c;font-size:.8rem">No customer record '
+                    '<div style="color:var(--silver-d);font-size:.8rem">No customer record '
                     '(guest checkout or access not approved).</div>'
                 )
             st.markdown(f'<div class="panel"><h4>Customer</h4>{body}</div>', unsafe_allow_html=True)
@@ -468,7 +551,7 @@ def list_page():
     if p1.button("← Prev", disabled=page == 0):
         st.session_state["page"] = page - 1
         st.rerun()
-    p2.markdown(f'<div style="text-align:center;color:#8b929c;padding-top:6px">Page {page + 1} / {pages} · {len(df)} orders</div>',
+    p2.markdown(f'<div style="text-align:center;color:var(--silver-d);padding-top:6px">Page {page + 1} / {pages} · {len(df)} orders</div>',
                 unsafe_allow_html=True)
     if p3.button("Next →", disabled=page >= pages - 1):
         st.session_state["page"] = page + 1
