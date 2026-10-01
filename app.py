@@ -1,5 +1,7 @@
 import os, base64, html, hmac, time
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
 import streamlit as st
@@ -180,6 +182,7 @@ def gql(query, variables=None):
 
 LIST_QUERY = """
 query($cursor: String) {
+  shop { ianaTimezone }
   orders(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true) {
     pageInfo { hasNextPage endCursor }
     nodes { id name createdAt }
@@ -189,6 +192,7 @@ query($cursor: String) {
 
 DETAIL_QUERY = """
 query($id: ID!) {
+  shop { ianaTimezone }
   order(id: $id) {
     name
     createdAt
@@ -204,6 +208,7 @@ query($id: ID!) {
       trackingInfo { company number url }
     }
     totalDiscountsSet { shopMoney { amount currencyCode } }
+    totalTipReceivedSet { shopMoney { amount currencyCode } }
     currentSubtotalPriceSet { shopMoney { amount currencyCode } }
     totalShippingPriceSet { shopMoney { amount currencyCode } }
     totalTaxSet { shopMoney { amount currencyCode } }
@@ -226,15 +231,16 @@ query($id: ID!) {
 
 @st.cache_data(ttl=300)
 def fetch_order_list(max_pages=5):
-    rows, cursor = [], None
+    rows, cursor, tz = [], None, None
     for _ in range(max_pages):
         data = gql(LIST_QUERY, {"cursor": cursor})
         if "errors" in data:
             st.error(data["errors"])
             break
+        tz = tz or ((data["data"].get("shop") or {}).get("ianaTimezone"))
         orders = data["data"]["orders"]
         for o in orders["nodes"]:
-            rows.append({"Order": o["name"], "Date": o["createdAt"][:10], "id": o["id"]})
+            rows.append({"Order": o["name"], "Date": fmt_dt(o["createdAt"], tz), "id": o["id"]})
         if not orders["pageInfo"]["hasNextPage"]:
             break
         cursor = orders["pageInfo"]["endCursor"]
@@ -247,6 +253,24 @@ def fetch_order(order_id):
 
 
 # ---------- Render helpers ----------
+def fmt_dt(iso, tz_name):
+    """Format like Shopify admin: 'Sep 30, 2026 at 3:42 pm' in the store's own timezone."""
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        try:
+            dt = dt.astimezone(ZoneInfo(tz_name))
+        except Exception:
+            pass  # fall back to UTC if the timezone is unavailable
+        hour = dt.hour % 12 or 12
+        return f"{dt.strftime('%b')} {dt.day}, {dt.year} at {hour}:{dt.minute:02d} {'am' if dt.hour < 12 else 'pm'}"
+    except Exception:
+        return str(iso)[:16].replace("T", " ")
+
+
+def amt(node):
+    return float(node["shopMoney"]["amount"]) if node else 0.0
+
+
 def esc(x):
     return html.escape(str(x)) if x not in (None, "") else "-"
 
@@ -304,25 +328,39 @@ def order_page(order_id):
         st.error("Order not found.")
         return
 
+    tz = ((data.get("data") or {}).get("shop") or {}).get("ianaTimezone")
+    cur = order["totalPriceSet"]["shopMoney"]["currencyCode"]
+
+    # Tips are hidden: removed from the product list, item count and totals
+    def is_tip(i):
+        return (i["title"] or "").strip().lower() in ("tip", "tips", "gratuity")
+
+    all_items = order["lineItems"]["nodes"]
+    shown_items = [i for i in all_items if not is_tip(i)]
+    tip_line_total = sum(amt(i["originalUnitPriceSet"]) * i["quantity"] for i in all_items if is_tip(i))
+    tip_total = amt(order.get("totalTipReceivedSet")) + tip_line_total
+    subtotal_val = amt(order["currentSubtotalPriceSet"]) - tip_line_total
+    total_val = amt(order["totalPriceSet"]) - tip_total
+
     with st.container(key="detail"):
         left, right = st.columns(2)
 
         with left:
             st.markdown(
                 f'<h2 style="margin:0">Order {esc(order["name"])}</h2>'
-                f'<div style="color:#8b929c;margin-bottom:12px">{order["createdAt"][:19].replace("T", " ")}</div>'
+                f'<div style="color:#8b929c;margin-bottom:12px">{fmt_dt(order["createdAt"], tz)}</div>'
                 f'{badge(order["displayFinancialStatus"])}{badge(order["displayFulfillmentStatus"])}',
                 unsafe_allow_html=True,
             )
 
-            total_items = sum(i["quantity"] for i in order["lineItems"]["nodes"])
+            total_items = sum(i["quantity"] for i in shown_items)
             chips = f'<span class="badge neutral">TOTAL ITEMS: {total_items}</span>'
             for code in order.get("discountCodes") or []:
                 chips += f'<span class="badge ok">DISCOUNT CODE: {esc(code)}</span>'
             st.markdown(chips, unsafe_allow_html=True)
 
             items = ""
-            for n, i in enumerate(order["lineItems"]["nodes"]):
+            for n, i in enumerate(shown_items):
                 sub = " · ".join(filter(None, [i["variantTitle"], f'SKU {i["sku"]}' if i["sku"] else ""]))
                 items += (
                     f'<div class="item" style="animation-delay:{0.15 + n * 0.08:.2f}s">'
@@ -339,11 +377,11 @@ def order_page(order_id):
                 disc_row = (f'<div class="tot" style="color:#5be39a"><span>{label}</span>'
                             f'<span>-{money(disc)}</span></div>')
             totals = (
-                f'<div class="tot"><span>Subtotal</span><span>{money(order["currentSubtotalPriceSet"])}</span></div>'
+                f'<div class="tot"><span>Subtotal</span><span>{subtotal_val:,.2f} {cur}</span></div>'
                 f'{disc_row}'
                 f'<div class="tot"><span>Shipping</span><span>{money(order["totalShippingPriceSet"])}</span></div>'
                 f'<div class="tot"><span>Tax</span><span>{money(order["totalTaxSet"])}</span></div>'
-                f'<div class="tot big"><span>Total</span><span>{money(order["totalPriceSet"])}</span></div>'
+                f'<div class="tot big"><span>Total</span><span>{total_val:,.2f} {cur}</span></div>'
             )
             extra = ""
             if order["paymentGatewayNames"]:
