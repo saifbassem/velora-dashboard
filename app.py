@@ -1,6 +1,6 @@
 import os, re, calendar, base64, html, hmac, time
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
@@ -136,7 +136,7 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
   box-shadow:0 16px 32px var(--sh2),0 0 24px var(--glow);}
 .st-key-grid .stButton>button p{margin:0;line-height:1.4;}
 .st-key-grid .stButton>button p:first-child{font-size:1.25rem;font-weight:700;letter-spacing:.05em;}
-.st-key-grid .stButton>button p:last-child:not(:first-child){font-size:.8rem;color:var(--silver-d);}
+.st-key-grid .stButton>button p:nth-child(n+2){font-size:.8rem;color:var(--silver-d);}
 .st-key-grid .stButton>button::after{content:"";position:absolute;top:0;left:-120%;width:60%;height:100%;
   background:linear-gradient(110deg,transparent,var(--sweep),transparent);transition:left .6s;}
 .st-key-grid .stButton>button:hover::after{left:140%;}
@@ -271,7 +271,7 @@ query($cursor: String, $q: String) {
   shop { ianaTimezone }
   orders(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true, query: $q) {
     pageInfo { hasNextPage endCursor }
-    nodes { id name createdAt }
+    nodes { id name confirmationNumber createdAt }
   }
 }
 """
@@ -336,7 +336,8 @@ def fetch_order_list(since_date):
         tz = tz or ((data["data"].get("shop") or {}).get("ianaTimezone"))
         orders = data["data"]["orders"]
         for o in orders["nodes"]:
-            rows.append({"Order": o["name"], "Date": fmt_dt(o["createdAt"], tz), "id": o["id"]})
+            rows.append({"Order": o["name"], "Confirmation": o.get("confirmationNumber") or "",
+                         "Date": fmt_dt(o["createdAt"], tz), "Day": local_day(o["createdAt"], tz), "id": o["id"]})
         if not orders["pageInfo"]["hasNextPage"]:
             break
         cursor = orders["pageInfo"]["endCursor"]
@@ -370,6 +371,16 @@ def fmt_dt(iso, tz_name):
         return f"{dt.strftime('%b')} {dt.day}, {dt.year} at {hour}:{dt.minute:02d} {'am' if dt.hour < 12 else 'pm'}"
     except Exception:
         return str(iso)[:16].replace("T", " ")
+
+
+def local_day(iso, tz_name):
+    """Calendar date of the order in the store's timezone."""
+    dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    try:
+        dt = dt.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        pass
+    return dt.date()
 
 
 def amt(node):
@@ -692,11 +703,27 @@ def list_page():
         st.info("No orders found.")
         return
 
-    st.text_input("Search order number", placeholder="e.g. 1001", key="search",
-                  on_change=lambda: st.session_state.update(page=0))
-    q = st.session_state.get("search", "")
+    reset = lambda: st.session_state.update(page=0)
+    c_search, c_from, c_to = st.columns([3, 1, 1])
+    c_search.text_input("Search", placeholder="Order number, confirmation code or date (e.g. 1001, XRUPIP716, 2026-09-30)",
+                        key="search", on_change=reset)
+    today = datetime.now(timezone.utc).date()
+    c_from.date_input("From date", value=None, key="d_from", min_value=since.date(),
+                      max_value=today + timedelta(days=1), on_change=reset)
+    c_to.date_input("To date", value=None, key="d_to", min_value=since.date(),
+                    max_value=today + timedelta(days=1), on_change=reset)
+
+    q = (st.session_state.get("search") or "").strip()
     if q:
-        df = df[df["Order"].str.contains(q, case=False)]
+        hay = df["Order"] + " #" + df["Confirmation"] + " " + df["Confirmation"] + " " + df["Date"] + " " + df["Day"].astype(str)
+        df = df[hay.str.contains(q, case=False, regex=False)]
+    d_from, d_to = st.session_state.get("d_from"), st.session_state.get("d_to")
+    if d_from:
+        df = df[df["Day"] >= d_from]
+    if d_to:
+        df = df[df["Day"] <= d_to]
+    if df.empty:
+        st.info("No orders match your search.")
 
     pages = max(1, -(-len(df) // PAGE_SIZE))
     page = min(st.session_state.get("page", 0), pages - 1)
@@ -706,7 +733,8 @@ def list_page():
         for start in range(0, len(chunk), 4):
             cols = st.columns(4)
             for col, row in zip(cols, chunk.iloc[start:start + 4].itertuples()):
-                if col.button(f"{row.Order}\n\n{row.Date}", key=f"o_{row.id}", width="stretch"):
+                label = f"{row.Order}\n\n{row.Date}" + (f"\n\n#{row.Confirmation}" if row.Confirmation else "")
+                if col.button(label, key=f"o_{row.id}", width="stretch"):
                     st.session_state["selected"] = row.id
                     st.rerun()
 
