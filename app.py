@@ -1,6 +1,6 @@
-import os, base64, html, hmac, time
+import os, re, calendar, base64, html, hmac, time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
@@ -172,6 +172,9 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 .avatar{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-size:1.5rem;font-weight:800;color:var(--av-text);margin-bottom:12px;animation:pop .7s backwards;
   background:var(--av-grad);box-shadow:0 0 22px var(--glow);}
+.confirm{margin:2px 0 14px;color:var(--silver);animation:fadeUp .6s backwards;}
+.confirm b{color:var(--strong);letter-spacing:.06em;}
+[data-testid="stForm"]{border:1px solid var(--bd);border-radius:16px;background:var(--card);margin-bottom:16px;}
 .kv{margin:4px 0;color:var(--silver)}.kv b{color:var(--strong)}
 .addr{color:var(--silver);line-height:1.6}
 
@@ -264,9 +267,9 @@ def gql(query, variables=None):
 
 
 LIST_QUERY = """
-query($cursor: String) {
+query($cursor: String, $q: String) {
   shop { ianaTimezone }
-  orders(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true) {
+  orders(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true, query: $q) {
     pageInfo { hasNextPage endCursor }
     nodes { id name createdAt }
   }
@@ -278,6 +281,7 @@ query($id: ID!) {
   shop { ianaTimezone }
   order(id: $id) {
     name
+    confirmationNumber
     createdAt
     displayFinancialStatus
     displayFulfillmentStatus
@@ -312,11 +316,20 @@ query($id: ID!) {
 """
 
 
-@st.cache_data(ttl=300)
-def fetch_order_list(max_pages=5):
+def three_months_ago():
+    now = datetime.now(timezone.utc)
+    y, m = now.year, now.month - 3
+    if m < 1:
+        m, y = m + 12, y - 1
+    return datetime(y, m, min(now.day, calendar.monthrange(y, m)[1]), tzinfo=timezone.utc)
+
+
+@st.cache_data(ttl=60, show_spinner="Loading orders from Shopify...")
+def fetch_order_list(since_date):
+    """Every order created from `since_date` (YYYY-MM-DD) until now, newest first."""
     rows, cursor, tz = [], None, None
-    for _ in range(max_pages):
-        data = gql(LIST_QUERY, {"cursor": cursor})
+    for _ in range(100):  # safety limit: 10,000 orders
+        data = gql(LIST_QUERY, {"cursor": cursor, "q": f"created_at:>={since_date}"})
         if "errors" in data:
             st.error(data["errors"])
             break
@@ -330,8 +343,17 @@ def fetch_order_list(max_pages=5):
     return pd.DataFrame(rows)
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=600)
+def fetch_scopes():
+    try:
+        d = gql("{ currentAppInstallation { accessScopes { handle } } }")
+        return {x["handle"] for x in d["data"]["currentAppInstallation"]["accessScopes"]}
+    except Exception:
+        return None
+
+
 def fetch_order(order_id):
+    """Always live (no cache), so anything changed or removed in Shopify disappears here too."""
     return gql(DETAIL_QUERY, {"id": order_id})
 
 
@@ -390,13 +412,82 @@ def address_html(title, a):
     return f'<div class="panel"><h4>{title}</h4><div class="addr">{body}</div></div>'
 
 
+TAGS_ADD = """
+mutation($id: ID!, $tags: [String!]!) {
+  tagsAdd(id: $id, tags: $tags) {
+    node { id }
+    userErrors { field message }
+  }
+}
+"""
+
+TAGS_REMOVE = """
+mutation($id: ID!, $tags: [String!]!) {
+  tagsRemove(id: $id, tags: $tags) {
+    node { id }
+    userErrors { field message }
+  }
+}
+"""
+
+ORDER_UPDATE = """
+mutation($input: OrderInput!) {
+  orderUpdate(input: $input) {
+    order { id email }
+    userErrors { field message }
+  }
+}
+"""
+
+
+def run_mutation(query, variables):
+    """Send a write request to Shopify. Returns (ok, error_message)."""
+    msg = ""
+    for attempt in range(2):
+        try:
+            data = gql(query, variables)
+        except requests.RequestException as e:
+            return False, f"Network error: {e}"
+        msg = ""
+        if data.get("errors"):
+            msg = "; ".join(str(e.get("message", e)) for e in data["errors"])
+        else:
+            root = next(iter((data.get("data") or {}).values()), None) or {}
+            msg = "; ".join(u.get("message", "") for u in (root.get("userErrors") or []))
+        if not msg:
+            return True, ""
+        denied = any(k in msg.lower() for k in ("access", "scope", "permission", "denied"))
+        if denied and attempt == 0:
+            get_token.clear()  # the saved token may be from before you added write_orders; get a fresh one
+            continue
+        break
+    if any(k in msg.lower() for k in ("access", "scope", "permission", "denied")):
+        msg += " (Your app needs the write_orders scope: release a new app version with it, then update the install.)"
+    return False, msg
+
+
+def looks_like_email(x):
+    return re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", x or "") is not None
+
+
 # ---------- Page 2: order details ----------
 def order_page(order_id):
     header("Order details")
-    if st.button("← Back to orders"):
+    b1, b2, _ = st.columns([1.4, 1.1, 6])
+    if b1.button("← Back to orders"):
         st.session_state.pop("selected", None)
         st.rerun()
+    if b2.button("↻ Refresh"):
+        st.rerun()
 
+    flash = st.session_state.pop("flash", None)
+    if flash:
+        st.success(flash)
+    order_body(order_id)
+
+
+@st.fragment(run_every=30)  # re-reads Shopify every 30 seconds
+def order_body(order_id):
     data = fetch_order(order_id)
     order = (data.get("data") or {}).get("order")
 
@@ -441,6 +532,12 @@ def order_page(order_id):
             for code in order.get("discountCodes") or []:
                 chips += f'<span class="badge ok">DISCOUNT CODE: {esc(code)}</span>'
             st.markdown(chips, unsafe_allow_html=True)
+            if order.get("confirmationNumber"):
+                st.markdown(
+                    f'<div class="confirm">Confirmation <b>#{esc(order["confirmationNumber"])}</b> '
+                    'was generated for this order.</div>',
+                    unsafe_allow_html=True,
+                )
 
             items = ""
             for n, i in enumerate(shown_items):
@@ -474,6 +571,35 @@ def order_page(order_id):
             if order["note"]:
                 extra += f'<div class="kv">Note: <b>{esc(order["note"])}</b></div>'
             st.markdown(f'<div class="panel"><h4>Summary</h4>{totals}{extra}</div>', unsafe_allow_html=True)
+
+            with st.form("tag_form"):
+                st.markdown("**Tags** — add or remove, separated by commas")
+                new_tags = st.text_input("Tags", value=", ".join(order["tags"]),
+                                         key="tag_input|" + order_id + "|" + "|".join(order["tags"]),
+                                         placeholder="e.g. vip, gift", label_visibility="collapsed")
+                if st.form_submit_button("Save tags to Shopify"):
+                    wanted = []
+                    for t in new_tags.split(","):
+                        t = t.strip()
+                        if t and t.lower() not in [w.lower() for w in wanted]:
+                            wanted.append(t)
+                    have = {t.lower() for t in order["tags"]}
+                    keep = {w.lower() for w in wanted}
+                    to_add = [t for t in wanted if t.lower() not in have]
+                    to_remove = [t for t in order["tags"] if t.lower() not in keep]
+                    if not to_add and not to_remove:
+                        st.info("No changes to save.")
+                    else:
+                        ok, err = True, ""
+                        if to_add:
+                            ok, err = run_mutation(TAGS_ADD, {"id": order_id, "tags": to_add})
+                        if ok and to_remove:
+                            ok, err = run_mutation(TAGS_REMOVE, {"id": order_id, "tags": to_remove})
+                        if ok:
+                            st.session_state["flash"] = "Tags updated in Shopify."
+                            st.rerun()
+                        else:
+                            st.error(f"Shopify did not accept the tags: {err}")
 
             ship_html = ""
             for n, f in enumerate(order.get("fulfillments") or []):
@@ -517,6 +643,30 @@ def order_page(order_id):
                     '(guest checkout or access not approved).</div>'
                 )
             st.markdown(f'<div class="panel"><h4>Customer</h4>{body}</div>', unsafe_allow_html=True)
+
+            current_email = order.get("email") or (c and c.get("email")) or ""
+            if not current_email and data.get("errors"):
+                st.info("The email could not be checked because Shopify blocked customer data, "
+                        "so editing is hidden to avoid overwriting an existing email.")
+            else:
+                with st.form("email_form"):
+                    st.markdown("**Customer email**" if current_email else "**No customer email on this order.** Add one:")
+                    new_email = st.text_input("Email", value=current_email,
+                                              key="email_input|" + order_id + "|" + current_email,
+                                              placeholder="name@example.com", label_visibility="collapsed")
+                    if st.form_submit_button("Save email to Shopify"):
+                        new_email = new_email.strip()
+                        if new_email == current_email:
+                            st.info("No changes to save.")
+                        elif not looks_like_email(new_email):
+                            st.warning("Please enter a valid email address.")
+                        else:
+                            ok, err = run_mutation(ORDER_UPDATE, {"input": {"id": order_id, "email": new_email}})
+                            if ok:
+                                st.session_state["flash"] = f"Email updated in Shopify: {new_email}"
+                                st.rerun()
+                            else:
+                                st.error(f"Shopify did not accept the email: {err}")
             st.markdown(address_html("Shipping address", order.get("shippingAddress")), unsafe_allow_html=True)
             st.markdown(address_html("Billing address", order.get("billingAddress")), unsafe_allow_html=True)
 
@@ -524,7 +674,20 @@ def order_page(order_id):
 # ---------- Page 1: order list ----------
 def list_page():
     header()
-    df = fetch_order_list()
+    since = three_months_ago()
+    df = fetch_order_list(since.strftime("%Y-%m-%d"))
+
+    info_col, refresh_col = st.columns([5, 1])
+    info_col.caption(f"All orders from {since.strftime('%b')} {since.day}, {since.year} until now · {len(df)} orders")
+    if refresh_col.button("↻ Refresh", key="refresh_list", width="stretch"):
+        fetch_order_list.clear()
+        st.rerun()
+
+    scopes = fetch_scopes()
+    if scopes is not None and "read_all_orders" not in scopes:
+        st.info("Shopify only shares the last 60 days with this app. To see the full 3 months, "
+                "request the read_all_orders scope from Shopify and add it to the app.")
+
     if df.empty:
         st.info("No orders found.")
         return
