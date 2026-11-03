@@ -543,6 +543,12 @@ def order_body(order_id):
             for code in order.get("discountCodes") or []:
                 chips += f'<span class="badge ok">DISCOUNT CODE: {esc(code)}</span>'
             st.markdown(chips, unsafe_allow_html=True)
+            if order.get("confirmationNumber"):
+                st.markdown(
+                    f'<div class="confirm">Confirmation <b>#{esc(order["confirmationNumber"])}</b> '
+                    'was generated for this order.</div>',
+                    unsafe_allow_html=True,
+                )
 
             items = ""
             for n, i in enumerate(shown_items):
@@ -699,7 +705,7 @@ def list_page():
 
     reset = lambda: st.session_state.update(page=0)
     c_search, c_from, c_to = st.columns([3, 1, 1])
-    c_search.text_input("Search", placeholder="Search by confirmation code...",
+    c_search.text_input("Search", placeholder="Order number, confirmation code or date (e.g. 1001, XRUPIP716, 2026-09-30)",
                         key="search", on_change=reset)
     today = datetime.now(timezone.utc).date()
     c_from.date_input("From date", value=None, key="d_from", min_value=since.date(),
@@ -709,9 +715,8 @@ def list_page():
 
     q = (st.session_state.get("search") or "").strip()
     if q:
-        df = df[df["Confirmation"].fillna("").astype(str).str.contains(
-            q, case=False, regex=False, na=False
-        )]
+        hay = df["Order"] + " #" + df["Confirmation"] + " " + df["Confirmation"] + " " + df["Date"] + " " + df["Day"].astype(str)
+        df = df[hay.str.contains(q, case=False, regex=False)]
     d_from, d_to = st.session_state.get("d_from"), st.session_state.get("d_to")
     if d_from:
         df = df[df["Day"] >= d_from]
@@ -728,7 +733,7 @@ def list_page():
         for start in range(0, len(chunk), 4):
             cols = st.columns(4)
             for col, row in zip(cols, chunk.iloc[start:start + 4].itertuples()):
-                label = f"{row.Order}\n\n{row.Date}"
+                label = f"{row.Order}\n\n{row.Date}" + (f"\n\n#{row.Confirmation}" if row.Confirmation else "")
                 if col.button(label, key=f"o_{row.id}", width="stretch"):
                     st.session_state["selected"] = row.id
                     st.rerun()
