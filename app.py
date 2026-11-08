@@ -1,3 +1,44 @@
+Claude
+Pasted text.txt
+Pasted text.txt
+TXT
+in every refresh they log out i dont want this and i want they can searsh by discount code and customer name and tags and customer email 
+
+and i want they can add note and effect in shopify  
+
+and i want in orders of customer when user press of it apper the orders of this customer
+
+Created a file, shared a file
+I updated app.py with all four changes. I haven’t run it against your Shopify store, so please test it.
+
+1. No more logout on refresh. After a correct password, the app puts a signed token in the page URL, valid for 7 days (LOGIN_DAYS at the top of the file). A refresh reads the token and signs the user back in. The open order or customer page also stays after a refresh. I added a “Sign out” button, because without it a login would last the full 7 days. Anyone who copies the full URL, including the t= part, can open the app, so users shouldn’t share that link.
+
+2. Search by discount code, customer name, tags and email. The search box now also matches the order’s email, the customer’s name and email, the shipping name, discount codes and tags. Every word you type must match somewhere, so “ahmed vip” finds orders for customer Ahmed that are tagged vip. Order number and date search still work.
+
+3. Add or edit a note. The order page has a new “Order note” box with a “Save note to Shopify” button. Clearing the box and saving removes the note. It uses the same write_orders permission as your tags and email editing.
+
+4. Orders of a customer. In the Customer panel there is now a “View all orders of [name]” button. It opens a page with all of that customer’s orders, and clicking one opens it. “Back” from that order returns to the customer’s list. Shopify may still only share the last 60 days unless the read_all_orders scope is added.
+
+Search by customer name and email only works if Shopify allows your app to read customer data (protected customer data access). If it doesn’t, the orders still load, but those fields are empty, so name and email searches find nothing. Discount code and tag search work either way.
+
+App
+PY
+why u remove search by confirtations code
+
+Checking whether a "#" prefix search still matches
+I didn’t remove it: the confirmation number is still loaded and included in the search text. But your old code also matched it with a # in front (like 
+#ABC123), and mine dropped that. I’ll restore it.
+
+Edited a file, shared a file
+I’ve fixed it and sent the updated app.py. Searching by confirmation code works again, with or without the #, and the code is still never shown on screen. The new search sits in the same box as the others, so you can combine it with a name or tag.
+
+App
+PY
+
+
+
+Claude is AI and can make mistakes.
+App · PY
 import os, re, calendar, base64, html, hmac, time
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -6,10 +47,10 @@ import requests
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-
+ 
 load_dotenv()
-
-
+ 
+ 
 def cfg(name, default=None):
     """Read a setting from environment/.env (local) or st.secrets (Streamlit Cloud)."""
     val = os.getenv(name)
@@ -19,22 +60,22 @@ def cfg(name, default=None):
         return st.secrets.get(name, default)
     except Exception:
         return default
-
-
+ 
+ 
 SHOP = cfg("SHOP")
 API_VERSION = "2026-07"
 PAGE_SIZE = 24
 LOGIN_DAYS = 7  # how long a login stays valid, even after refresh / closing the tab
-
+ 
 LOGO_PATH = Path(__file__).parent / "logo.png"
 LOGO_B64 = base64.b64encode(LOGO_PATH.read_bytes()).decode() if LOGO_PATH.exists() else ""
-
+ 
 st.set_page_config(
     page_title="VSW Orders",
     page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else None,
     layout="wide",
 )
-
+ 
 # ---------- Themes (dark / light) ----------
 THEMES = {
     "dark": {
@@ -68,16 +109,16 @@ THEMES = {
         "btn-grad": "linear-gradient(135deg,#1a1d22,#4a5160)", "btn-text": "#ffffff",
     },
 }
-
+ 
 if "theme" not in st.session_state:
     q = st.query_params.get("theme", "dark")
     st.session_state["theme"] = q if q in THEMES else "dark"
-
+ 
 # ---------- Style + animations ----------
 BASE_CSS = """
 <style>
 html,body,.stApp{background:var(--bg);color:var(--text);}
-
+ 
 /* hide Streamlit / GitHub branding */
 #MainMenu,footer,[data-testid="stToolbar"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],
 [data-testid="stAppDeployButton"],.stAppDeployButton,[class*="viewerBadge"],[class*="_profileContainer"],
@@ -85,13 +126,13 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 [data-testid="stHeader"]{display:none;}
 .block-container{padding-top:1.5rem;}
 [data-testid="stMain"]{position:relative;z-index:1;}
-
+ 
 /* drifting metallic glow in the background */
 .stApp::before{content:"";position:fixed;inset:-20%;z-index:0;pointer-events:none;
   background:radial-gradient(40% 40% at 20% 25%,var(--blob1),transparent 70%),
              radial-gradient(35% 35% at 80% 70%,var(--blob2),transparent 70%);
   animation:drift 22s ease-in-out infinite alternate;}
-
+ 
 @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(4%,-3%) scale(1.12)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
 @keyframes slideL{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:translateX(0)}}
@@ -102,12 +143,12 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
 @keyframes lineMove{from{background-position:0 0}to{background-position:300% 0}}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,193,7,.5)}100%{box-shadow:0 0 0 12px rgba(255,193,7,0)}}
-
+ 
 .block-container{animation:fadeUp .6s cubic-bezier(.2,.8,.2,1) backwards;}
-
+ 
 /* theme toggle + sign out */
 .st-key-theme_btn button,.st-key-signout_btn button{font-size:.8rem;padding:2px 10px;min-height:2rem;}
-
+ 
 /* header with logo */
 .vsw-header{display:flex;align-items:center;gap:22px;margin:4px 0 10px;animation:fadeUp .7s backwards;}
 .logo-wrap{position:relative;width:150px;animation:floaty 5s ease-in-out infinite;}
@@ -123,13 +164,13 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 .vsw-line{height:2px;border-radius:2px;margin:6px 0 22px;
   background:linear-gradient(90deg,transparent,var(--line-a),var(--line-b),transparent,var(--line-a));background-size:300% 100%;
   animation:lineMove 6s linear infinite;}
-
+ 
 /* generic buttons */
 .stButton>button{border-radius:12px;border:1px solid var(--bd);background:var(--card);color:var(--text);
   transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s,border-color .25s;}
 .stButton>button:hover{transform:translateY(-2px);border-color:var(--bd-h);box-shadow:0 8px 20px var(--sh);}
 .stButton>button:active{transform:scale(.97);}
-
+ 
 /* order cards */
 .st-key-grid .stButton>button{height:auto;padding:18px 10px;position:relative;overflow:hidden;
   animation:fadeUp .55s cubic-bezier(.2,.8,.2,1) backwards;}
@@ -144,14 +185,14 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 .st-key-grid [data-testid="stColumn"]:nth-child(2) .stButton>button{animation-delay:.07s}
 .st-key-grid [data-testid="stColumn"]:nth-child(3) .stButton>button{animation-delay:.14s}
 .st-key-grid [data-testid="stColumn"]:nth-child(4) .stButton>button{animation-delay:.21s}
-
+ 
 /* inputs */
 .stTextInput [data-baseweb="input"]{background:var(--card);border:1px solid var(--bd);border-radius:12px;}
 .stTextInput input{background:transparent;color:var(--text);transition:border-color .3s,box-shadow .3s;}
 .stTextInput [data-baseweb="input"]:focus-within{border-color:var(--silver);box-shadow:0 0 0 3px var(--ring);}
 .stTextArea [data-baseweb="textarea"]{background:var(--card);border:1px solid var(--bd);border-radius:12px;}
 .stTextArea textarea{background:transparent;color:var(--text);}
-
+ 
 /* detail page */
 .st-key-detail [data-testid="stColumn"]:nth-child(1){animation:slideL .7s cubic-bezier(.2,.8,.2,1) backwards;}
 .st-key-detail [data-testid="stColumn"]:nth-child(2){animation:slideR .7s cubic-bezier(.2,.8,.2,1) .1s backwards;}
@@ -178,18 +219,18 @@ a[href*="streamlit.io"],a[href*="github.com"]{display:none!important;visibility:
 [data-testid="stForm"]{border:1px solid var(--bd);border-radius:16px;background:var(--card);margin-bottom:16px;}
 .kv{margin:4px 0;color:var(--silver)}.kv b{color:var(--strong)}
 .addr{color:var(--silver);line-height:1.6}
-
+ 
 .track-link{display:inline-block;margin:6px 0 2px;padding:8px 16px;border-radius:10px;font-weight:700;letter-spacing:.05em;
   color:var(--btn-text)!important;text-decoration:none!important;background:var(--btn-grad);
   transition:transform .25s,box-shadow .25s;}
 .track-link:hover{transform:translateY(-3px);box-shadow:0 8px 22px var(--sh2);}
 .ship{padding:10px 0;border-bottom:1px solid var(--bd);animation:fadeUp .5s backwards;}
 .ship:last-child{border-bottom:none}
-
+ 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 """
-
+ 
 # Extra rules that make Streamlit's own dark widgets readable in light mode
 LIGHT_EXTRA = """
 <style>
@@ -208,24 +249,24 @@ LIGHT_EXTRA = """
 [data-testid="stAlert"] p{color:var(--text);}
 </style>
 """
-
-
+ 
+ 
 def inject_css():
     name = st.session_state["theme"]
     root = f":root{{color-scheme:{name};" + "".join(f"--{k}:{v};" for k, v in THEMES[name].items()) + "}"
     st.markdown(f"<style>{root}</style>" + BASE_CSS + (LIGHT_EXTRA if name == "light" else ""),
                 unsafe_allow_html=True)
-
-
+ 
+ 
 inject_css()
-
-
+ 
+ 
 # ---------- Navigation (kept in the URL, so a refresh stays on the same page) ----------
 def _qp_del(key):
     if key in st.query_params:
         del st.query_params[key]
-
-
+ 
+ 
 def go(order=None, cust=None, cname=None):
     """Open an order page (order=gid), a customer's orders page (cust=gid), or the main list (nothing)."""
     if order:
@@ -242,8 +283,8 @@ def go(order=None, cust=None, cname=None):
         st.session_state.pop("customer", None)
         _qp_del("cust")
         _qp_del("cname")
-
-
+ 
+ 
 def restore_navigation():
     """After a browser refresh, session_state is empty: rebuild the page from the URL."""
     if st.session_state.get("restored"):
@@ -255,8 +296,8 @@ def restore_navigation():
         st.session_state["customer"] = {"id": f"gid://shopify/Customer/{c}", "name": qp.get("cname", "")}
     if o.isdigit():
         st.session_state["selected"] = f"gid://shopify/Order/{o}"
-
-
+ 
+ 
 def theme_toggle():
     light = st.session_state["theme"] == "light"
     _, mid, right = st.columns([4, 1, 1])
@@ -269,8 +310,8 @@ def theme_toggle():
         st.session_state["theme"] = "dark" if light else "light"
         st.query_params["theme"] = st.session_state["theme"]
         st.rerun()
-
-
+ 
+ 
 def header(subtitle="Velora Sportswear"):
     theme_toggle()
     if LOGO_B64:
@@ -284,8 +325,8 @@ def header(subtitle="Velora Sportswear"):
         '<div class="vsw-line"></div>',
         unsafe_allow_html=True,
     )
-
-
+ 
+ 
 # ---------- Shopify helpers ----------
 @st.cache_data(ttl=60 * 60 * 12)  # token lasts ~24h
 def get_token():
@@ -299,8 +340,8 @@ def get_token():
     )
     r.raise_for_status()
     return r.json()["access_token"]
-
-
+ 
+ 
 def gql(query, variables=None):
     r = requests.post(
         f"https://{SHOP}/admin/api/{API_VERSION}/graphql.json",
@@ -309,8 +350,8 @@ def gql(query, variables=None):
     )
     r.raise_for_status()
     return r.json()
-
-
+ 
+ 
 # The list also loads discount codes, tags, emails and customer names so the search box can match them.
 LIST_QUERY = """
 query($cursor: String, $q: String) {
@@ -326,7 +367,7 @@ query($cursor: String, $q: String) {
   }
 }
 """
-
+ 
 DETAIL_QUERY = """
 query($id: ID!) {
   shop { ianaTimezone }
@@ -364,16 +405,16 @@ query($id: ID!) {
   }
 }
 """
-
-
+ 
+ 
 def three_months_ago():
     now = datetime.now(timezone.utc)
     y, m = now.year, now.month - 3
     if m < 1:
         m, y = m + 12, y - 1
     return datetime(y, m, min(now.day, calendar.monthrange(y, m)[1]), tzinfo=timezone.utc)
-
-
+ 
+ 
 def _fetch_orders(search_query):
     rows, cursor, tz = [], None, None
     for _ in range(100):  # safety limit: 10,000 orders
@@ -389,7 +430,8 @@ def _fetch_orders(search_query):
             date_txt = fmt_dt(o["createdAt"], tz)
             day = local_day(o["createdAt"], tz)
             search = " ".join(filter(None, [
-                o["name"], o.get("confirmationNumber") or "", date_txt, str(day),
+                o["name"], o.get("confirmationNumber") or "",
+                ("#" + o["confirmationNumber"]) if o.get("confirmationNumber") else "", date_txt, str(day),
                 o.get("email") or "", c.get("displayName") or "", c.get("email") or "",
                 (o.get("shippingAddress") or {}).get("name") or "",
                 " ".join(o.get("discountCodes") or []), " ".join(o.get("tags") or []),
@@ -399,20 +441,20 @@ def _fetch_orders(search_query):
             break
         cursor = orders["pageInfo"]["endCursor"]
     return pd.DataFrame(rows, columns=["Order", "Date", "Day", "id", "Search"])
-
-
+ 
+ 
 @st.cache_data(ttl=60, show_spinner="Loading orders from Shopify...")
 def fetch_order_list(since_date):
     """Every order created from `since_date` (YYYY-MM-DD) until now, newest first."""
     return _fetch_orders(f"created_at:>={since_date}")
-
-
+ 
+ 
 @st.cache_data(ttl=60, show_spinner="Loading customer orders...")
 def fetch_customer_orders(customer_gid):
     """All orders of one customer, newest first."""
     return _fetch_orders(f"customer_id:{customer_gid.rsplit('/', 1)[-1]}")
-
-
+ 
+ 
 @st.cache_data(ttl=600)
 def fetch_scopes():
     try:
@@ -420,13 +462,13 @@ def fetch_scopes():
         return {x["handle"] for x in d["data"]["currentAppInstallation"]["accessScopes"]}
     except Exception:
         return None
-
-
+ 
+ 
 def fetch_order(order_id):
     """Always live (no cache), so anything changed or removed in Shopify disappears here too."""
     return gql(DETAIL_QUERY, {"id": order_id})
-
-
+ 
+ 
 # ---------- Render helpers ----------
 def fmt_dt(iso, tz_name):
     """Format like Shopify admin: 'Sep 30, 2026 at 3:42 pm' in the store's own timezone."""
@@ -440,8 +482,8 @@ def fmt_dt(iso, tz_name):
         return f"{dt.strftime('%b')} {dt.day}, {dt.year} at {hour}:{dt.minute:02d} {'am' if dt.hour < 12 else 'pm'}"
     except Exception:
         return str(iso)[:16].replace("T", " ")
-
-
+ 
+ 
 def local_day(iso, tz_name):
     """Calendar date of the order in the store's timezone."""
     dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
@@ -450,23 +492,23 @@ def local_day(iso, tz_name):
     except Exception:
         pass
     return dt.date()
-
-
+ 
+ 
 def amt(node):
     return float(node["shopMoney"]["amount"]) if node else 0.0
-
-
+ 
+ 
 def esc(x):
     return html.escape(str(x)) if x not in (None, "") else "-"
-
-
+ 
+ 
 def money(node):
     if not node:
         return "-"
     m = node["shopMoney"]
     return f'{float(m["amount"]):,.2f} {m["currencyCode"]}'
-
-
+ 
+ 
 def badge(label):
     label = label or "-"
     l = label.upper()
@@ -479,8 +521,8 @@ def badge(label):
     else:
         cls = "neutral"
     return f'<span class="badge {cls}">{esc(label)}</span>'
-
-
+ 
+ 
 def address_html(title, a):
     if not a:
         body = '<span style="color:var(--silver-d)">Not available</span>'
@@ -490,8 +532,8 @@ def address_html(title, a):
                  a.get("province"), a.get("country"), a.get("phone")]
         body = "<br>".join(html.escape(p) for p in parts if p)
     return f'<div class="panel"><h4>{title}</h4><div class="addr">{body}</div></div>'
-
-
+ 
+ 
 def render_grid(chunk, cust=None):
     """4-per-row order cards. Clicking one opens that order."""
     with st.container(key="grid"):
@@ -502,8 +544,8 @@ def render_grid(chunk, cust=None):
                 if col.button(label, key=f"o_{row.id}", width="stretch"):
                     go(order=row.id, cust=cust["id"] if cust else None, cname=cust["name"] if cust else None)
                     st.rerun()
-
-
+ 
+ 
 TAGS_ADD = """
 mutation($id: ID!, $tags: [String!]!) {
   tagsAdd(id: $id, tags: $tags) {
@@ -512,7 +554,7 @@ mutation($id: ID!, $tags: [String!]!) {
   }
 }
 """
-
+ 
 TAGS_REMOVE = """
 mutation($id: ID!, $tags: [String!]!) {
   tagsRemove(id: $id, tags: $tags) {
@@ -521,7 +563,7 @@ mutation($id: ID!, $tags: [String!]!) {
   }
 }
 """
-
+ 
 ORDER_UPDATE = """
 mutation($input: OrderInput!) {
   orderUpdate(input: $input) {
@@ -530,8 +572,8 @@ mutation($input: OrderInput!) {
   }
 }
 """
-
-
+ 
+ 
 def run_mutation(query, variables):
     """Send a write request to Shopify. Returns (ok, error_message)."""
     msg = ""
@@ -556,12 +598,12 @@ def run_mutation(query, variables):
     if any(k in msg.lower() for k in ("access", "scope", "permission", "denied")):
         msg += " (Your app needs the write_orders scope: release a new app version with it, then update the install.)"
     return False, msg
-
-
+ 
+ 
 def looks_like_email(x):
     return re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", x or "") is not None
-
-
+ 
+ 
 # ---------- Page 3: all orders of one customer ----------
 def customer_page(cust):
     header("Customer orders")
@@ -569,7 +611,7 @@ def customer_page(cust):
     if b1.button("← Back to orders"):
         go()
         st.rerun()
-
+ 
     name = cust.get("name") or "Customer"
     df = fetch_customer_orders(cust["id"])
     st.markdown(f'<h2 style="margin:0">{esc(name)}</h2>'
@@ -579,8 +621,8 @@ def customer_page(cust):
         st.info("No orders found for this customer.")
         return
     render_grid(df, cust)
-
-
+ 
+ 
 # ---------- Page 2: order details ----------
 def order_page(order_id):
     header("Order details")
@@ -594,18 +636,18 @@ def order_page(order_id):
         st.rerun()
     if b2.button("↻ Refresh"):
         st.rerun()
-
+ 
     flash = st.session_state.pop("flash", None)
     if flash:
         st.success(flash)
     order_body(order_id)
-
-
+ 
+ 
 @st.fragment(run_every=30)  # re-reads Shopify every 30 seconds
 def order_body(order_id):
     data = fetch_order(order_id)
     order = (data.get("data") or {}).get("order")
-
+ 
     if data.get("errors"):
         st.warning(
             "Some fields were blocked by Shopify (usually customer data needs "
@@ -616,24 +658,24 @@ def order_body(order_id):
     if not order:
         st.error("Order not found.")
         return
-
+ 
     tz = ((data.get("data") or {}).get("shop") or {}).get("ianaTimezone")
     cur = order["totalPriceSet"]["shopMoney"]["currencyCode"]
-
+ 
     # Tips are hidden: removed from the product list, item count and totals
     def is_tip(i):
         return (i["title"] or "").strip().lower() in ("tip", "tips", "gratuity")
-
+ 
     all_items = order["lineItems"]["nodes"]
     shown_items = [i for i in all_items if not is_tip(i)]
     tip_line_total = sum(amt(i["originalUnitPriceSet"]) * i["quantity"] for i in all_items if is_tip(i))
     tip_total = amt(order.get("totalTipReceivedSet")) + tip_line_total
     subtotal_val = amt(order["currentSubtotalPriceSet"]) - tip_line_total
     total_val = amt(order["totalPriceSet"]) - tip_total
-
+ 
     with st.container(key="detail"):
         left, right = st.columns(2)
-
+ 
         with left:
             st.markdown(
                 f'<h2 style="margin:0">Order {esc(order["name"])}</h2>'
@@ -641,13 +683,13 @@ def order_body(order_id):
                 f'{badge(order["displayFinancialStatus"])}{badge(order["displayFulfillmentStatus"])}',
                 unsafe_allow_html=True,
             )
-
+ 
             total_items = sum(i["quantity"] for i in shown_items)
             chips = f'<span class="badge neutral">TOTAL ITEMS: {total_items}</span>'
             for code in order.get("discountCodes") or []:
                 chips += f'<span class="badge ok">DISCOUNT CODE: {esc(code)}</span>'
             st.markdown(chips, unsafe_allow_html=True)
-
+ 
             items = ""
             for n, i in enumerate(shown_items):
                 sub = " · ".join(filter(None, [i["variantTitle"], f'SKU {i["sku"]}' if i["sku"] else ""]))
@@ -657,7 +699,7 @@ def order_body(order_id):
                     f'<div class="q">{i["quantity"]} × {money(i["originalUnitPriceSet"])}</div></div>'
                 )
             st.markdown(f'<div class="panel"><h4>Products ({total_items} items)</h4>{items}</div>', unsafe_allow_html=True)
-
+ 
             disc = order.get("totalDiscountsSet")
             disc_row = ""
             if disc and float(disc["shopMoney"]["amount"]) > 0:
@@ -678,7 +720,7 @@ def order_body(order_id):
             if order["tags"]:
                 extra += f'<div class="kv">Tags: <b>{esc(", ".join(order["tags"]))}</b></div>'
             st.markdown(f'<div class="panel"><h4>Summary</h4>{totals}{extra}</div>', unsafe_allow_html=True)
-
+ 
             with st.form("tag_form"):
                 st.markdown("**Tags** — add or remove, separated by commas")
                 new_tags = st.text_input("Tags", value=", ".join(order["tags"]),
@@ -707,7 +749,7 @@ def order_body(order_id):
                             st.rerun()
                         else:
                             st.error(f"Shopify did not accept the tags: {err}")
-
+ 
             current_note = order.get("note") or ""
             with st.form("note_form"):
                 st.markdown("**Order note** — shows in Shopify on this order")
@@ -726,7 +768,7 @@ def order_body(order_id):
                             st.rerun()
                         else:
                             st.error(f"Shopify did not accept the note: {err}")
-
+ 
             ship_html = ""
             for n, f in enumerate(order.get("fulfillments") or []):
                 ship_html += f'<div class="ship" style="animation-delay:{n * 0.1:.1f}s">{badge(f["status"])}'
@@ -747,7 +789,7 @@ def order_body(order_id):
             if not ship_html:
                 ship_html = '<div style="color:var(--silver-d)">Not fulfilled yet. Tracking will appear here once it ships.</div>'
             st.markdown(f'<div class="panel"><h4>Shipping &amp; tracking</h4>{ship_html}</div>', unsafe_allow_html=True)
-
+ 
         with right:
             c = order.get("customer")
             if c:
@@ -769,13 +811,13 @@ def order_body(order_id):
                     '(guest checkout or access not approved).</div>'
                 )
             st.markdown(f'<div class="panel"><h4>Customer</h4>{body}</div>', unsafe_allow_html=True)
-
+ 
             if c and c.get("id"):
                 if st.button(f"📦 View all orders of {c['displayName'] or 'this customer'}",
                              key="cust_orders_btn", width="stretch"):
                     go(cust=c["id"], cname=c["displayName"] or "Customer")
                     st.rerun()
-
+ 
             current_email = order.get("email") or (c and c.get("email")) or ""
             if not current_email and data.get("errors"):
                 st.info("The email could not be checked because Shopify blocked customer data, "
@@ -801,29 +843,29 @@ def order_body(order_id):
                                 st.error(f"Shopify did not accept the email: {err}")
             st.markdown(address_html("Shipping address", order.get("shippingAddress")), unsafe_allow_html=True)
             st.markdown(address_html("Billing address", order.get("billingAddress")), unsafe_allow_html=True)
-
-
+ 
+ 
 # ---------- Page 1: order list ----------
 def list_page():
     header()
     since = three_months_ago()
     df = fetch_order_list(since.strftime("%Y-%m-%d"))
-
+ 
     info_col, refresh_col = st.columns([5, 1])
     info_col.caption(f"All orders from {since.strftime('%b')} {since.day}, {since.year} until now · {len(df)} orders")
     if refresh_col.button("↻ Refresh", key="refresh_list", width="stretch"):
         fetch_order_list.clear()
         st.rerun()
-
+ 
     scopes = fetch_scopes()
     if scopes is not None and "read_all_orders" not in scopes:
         st.info("Shopify only shares the last 60 days with this app. To see the full 3 months, "
                 "request the read_all_orders scope from Shopify and add it to the app.")
-
+ 
     if df.empty:
         st.info("No orders found.")
         return
-
+ 
     reset = lambda: st.session_state.update(page=0)
     c_search, c_from, c_to = st.columns([3, 1, 1])
     c_search.text_input("Search",
@@ -834,7 +876,7 @@ def list_page():
                       max_value=today + timedelta(days=1), on_change=reset)
     c_to.date_input("To date", value=None, key="d_to", min_value=since.date(),
                     max_value=today + timedelta(days=1), on_change=reset)
-
+ 
     q = (st.session_state.get("search") or "").strip()
     if q:
         # Every word must match somewhere (order, date, name, email, discount code, tags), e.g. "ahmed vip".
@@ -847,13 +889,13 @@ def list_page():
         df = df[df["Day"] <= d_to]
     if df.empty:
         st.info("No orders match your search.")
-
+ 
     pages = max(1, -(-len(df) // PAGE_SIZE))
     page = min(st.session_state.get("page", 0), pages - 1)
     chunk = df.iloc[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-
+ 
     render_grid(chunk)
-
+ 
     p1, p2, p3 = st.columns([1, 2, 1])
     if p1.button("← Prev", disabled=page == 0):
         st.session_state["page"] = page - 1
@@ -863,18 +905,18 @@ def list_page():
     if p3.button("Next →", disabled=page >= pages - 1):
         st.session_state["page"] = page + 1
         st.rerun()
-
-
+ 
+ 
 # ---------- Login (stays valid after refresh) ----------
 def _sign(password, expires):
     return hmac.new(str(password).encode(), str(expires).encode(), "sha256").hexdigest()
-
-
+ 
+ 
 def make_token(password):
     exp = int(time.time()) + LOGIN_DAYS * 86400
     return f"{exp}.{_sign(password, exp)}"
-
-
+ 
+ 
 def valid_token(token, password):
     try:
         exp, sig = (token or "").split(".", 1)
@@ -883,8 +925,8 @@ def valid_token(token, password):
         return hmac.compare_digest(sig, _sign(password, exp))
     except Exception:
         return False
-
-
+ 
+ 
 def login_gate():
     password = cfg("APP_PASSWORD")
     if not password:
@@ -910,8 +952,8 @@ def login_gate():
                 time.sleep(1)  # slows down password guessing
                 st.error("Wrong password.")
     st.stop()
-
-
+ 
+ 
 # ---------- Router ----------
 login_gate()
 restore_navigation()
@@ -921,3 +963,5 @@ elif "customer" in st.session_state:
     customer_page(st.session_state["customer"])
 else:
     list_page()
+ 
+Claude finished the response
